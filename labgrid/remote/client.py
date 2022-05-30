@@ -12,7 +12,7 @@ import signal
 import sys
 import shlex
 import json
-from textwrap import indent
+from textwrap import indent, dedent
 from socket import gethostname
 from getpass import getuser
 from collections import defaultdict, OrderedDict
@@ -21,6 +21,7 @@ from pprint import pformat
 import txaio
 txaio.use_asyncio()
 from autobahn.asyncio.wamp import ApplicationSession
+import shtab
 
 from .common import *
 from ..environment import Environment
@@ -33,6 +34,57 @@ from ..util.proxy import proxymanager
 from ..util.helper import processwrapper
 from ..util import atomic_replace
 from ..driver import Mode
+
+
+PLACES = {
+    "bash": "_shtab_place_completion",
+    "zsh": "",
+}
+RESOURCES = {
+    "bash": "_shtab_res_completion",
+    "zsh": "",
+}
+PREAMBLE = {
+    "bash": dedent(f"""\
+        # $1=COMP_WORDS[1]
+        function _shtab_place_completion() {{
+            _places=($({sys.argv[0]} complete places))
+            compgen -W "${{_places[*]}}" -- $1
+        }}
+        function _shtab_res_completion() {{
+            local cur
+            cur="${{COMP_WORDS[COMP_CWORD]}}"
+            #echo >&2
+            #_get_comp_words_by_ref -n "//" cur
+            _res=($({sys.argv[0]} complete resources))
+            #echo ${{_res[*]}} >&2
+            #echo $(compgen -W "${{_res[*]}}" -- "$cur") >&2
+            #echo >&2
+            #echo >&2
+            compopt -o default
+            compgen -W "${{_res[*]}}" -- "$cur"
+        }}
+        function _shtab_asdasdas_completion() {{
+            # Forward cdd if entered by user
+            # Then get list of all dids
+            CDD_ARG=""
+            for ((idx=0; idx <= ${{#COMP_WORDS[@]}}; idx++)); do
+                if [ "${{COMP_WORDS[idx]}}" == "--cdd" ]; then
+                    CDD_ARG="${{COMP_WORDS[idx]}} ${{COMP_WORDS[idx+1]}}"
+                fi
+            done
+            local _dids
+            if [[ "${{COMP_WORDS[COMP_CWORD]}}" =~ [0-9].* ]]; then
+                _dids=($({sys.argv[0]} ${{CDD_ARG}} list dids))
+            else
+                _dids=($({sys.argv[0]} ${{CDD_ARG}} list didnames))
+            fi
+            compgen -W "${{_dids[*]}}" -- $1
+        }}
+        """),
+    "zsh": "",
+}
+
 
 txaio.config.loop = asyncio.get_event_loop()
 
@@ -160,8 +212,8 @@ class ClientSession(ApplicationSession):
         if self.args.type == 'resources':
             for exporter, groups in sorted(self.resources.items()):
                 for group_name, group in sorted(groups.items()):
-                    for _, resource in sorted(group.items()):
-                        print(f"{exporter}/{group_name}/{resource.cls}")
+                    for resource_name, resource in sorted(group.items()):
+                        print(f"{exporter}/{group_name}/{resource.cls}/{resource_name}")
         elif self.args.type == 'places':
             for name in sorted(self.places.keys()):
                 print(name)
@@ -1490,6 +1542,7 @@ def main():
     token = os.environ.get('LG_TOKEN', None)
 
     parser = argparse.ArgumentParser()
+    shtab.add_argument_to(parser, "--print-completion", preamble=PREAMBLE)
     parser.add_argument(
         '-x',
         '--crossbar',
@@ -1504,14 +1557,14 @@ def main():
         type=str,
         default=os.environ.get("LG_ENV"),
         help="config file"
-    )
+    ).complete = shtab.FILE
     parser.add_argument(
         '-p',
         '--place',
         type=str,
         default=place,
         help="place name/alias"
-    )
+    ).complete = PLACES
     parser.add_argument(
         '-s',
         '--state',
@@ -1546,7 +1599,7 @@ def main():
 
     subparser = subparsers.add_parser('help')
 
-    subparser = subparsers.add_parser('complete')
+    subparser = subparsers.add_parser('complete', help=argparse.SUPPRESS)
     subparser.add_argument('type', choices=['resources', 'places'])
     subparser.set_defaults(func=ClientSession.complete)
 
@@ -1560,7 +1613,7 @@ def main():
     subparser.add_argument('-e', '--exporter')
     subparser.add_argument('--sort-by-matched-place-change', action='store_true',
                            help="sort by matched place's changed date (oldest first) and show place and date")  # pylint: disable=line-too-long
-    subparser.add_argument('match', nargs='?')
+    subparser.add_argument('match', nargs='?').complete = RESOURCES
     subparser.set_defaults(func=ClientSession.print_resources)
 
     subparser = subparsers.add_parser('places', aliases=('p',),
