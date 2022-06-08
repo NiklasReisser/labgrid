@@ -45,42 +45,36 @@ RESOURCES = {
     "zsh": "",
 }
 PREAMBLE = {
-    "bash": dedent(f"""\
+    "bash": dedent("""\
         # $1=COMP_WORDS[1]
-        function _shtab_place_completion() {{
-            _places=($({sys.argv[0]} complete places))
-            compgen -W "${{_places[*]}}" -- $1
-        }}
-        function _shtab_res_completion() {{
-            local cur
-            cur="${{COMP_WORDS[COMP_CWORD]}}"
-            #echo >&2
-            #_get_comp_words_by_ref -n "//" cur
-            _res=($({sys.argv[0]} complete resources))
-            #echo ${{_res[*]}} >&2
-            #echo $(compgen -W "${{_res[*]}}" -- "$cur") >&2
-            #echo >&2
-            #echo >&2
-            compopt -o default
-            compgen -W "${{_res[*]}}" -- "$cur"
-        }}
-        function _shtab_asdasdas_completion() {{
-            # Forward cdd if entered by user
-            # Then get list of all dids
-            CDD_ARG=""
-            for ((idx=0; idx <= ${{#COMP_WORDS[@]}}; idx++)); do
-                if [ "${{COMP_WORDS[idx]}}" == "--cdd" ]; then
-                    CDD_ARG="${{COMP_WORDS[idx]}} ${{COMP_WORDS[idx+1]}}"
-                fi
+        function _shtab_place_completion() {
+            _places=( $(${COMP_WORDS[0]} complete places) )
+
+            compgen -W "${_places[*]}" -- $1
+        }
+        function _shtab_res_completion() {
+            # Hack:
+            # shtab passes -o filename to complete. So readline cuts off all but the last element of the path. (The resource name)
+            # This is not what we want here, so we shorten the returned resource paths to the next slash (including)
+            # e.g. Hostname/Gro<TAB>
+            # Now _res is Hostname/Group1/Class/A Hostname/Group1/Class/B Hostname/Group2/Class/A ...
+            # Readline shortens this to A B A as possible completions to be printed for the user.
+            # The solution is to iterate over _res, cutting of everything behind Group1
+            # So _res is Hostname/Group1/ Hostname/Group1/ Hostname/Group2/
+            #echo "FUNC BEG" >&2
+            #if [ "$$" -eq "$BASHPID" ]; then echo "not subshell"  >&2 ; else echo "subshell"  >&2; fi
+
+            #shopt -p | grep "lastpipe" >&2
+            #"${COMP_WORDS[COMP_CWORD]}"))
+            _res=($(${COMP_WORDS[0]} complete resources "${COMP_WORDS[COMP_CWORD]}"))
+
+            for res in $_res; do
+            [ "${res: -1}" == "/" ] && compopt -o nospace
             done
-            local _dids
-            if [[ "${{COMP_WORDS[COMP_CWORD]}}" =~ [0-9].* ]]; then
-                _dids=($({sys.argv[0]} ${{CDD_ARG}} list dids))
-            else
-                _dids=($({sys.argv[0]} ${{CDD_ARG}} list didnames))
-            fi
-            compgen -W "${{_dids[*]}}" -- $1
-        }}
+
+            compgen -W "${_res[*]}" -- "${COMP_WORDS[COMP_CWORD]}"
+            #echo "FUNC END" >&2
+        }
         """),
     "zsh": "",
 }
@@ -213,7 +207,14 @@ class ClientSession(ApplicationSession):
             for exporter, groups in sorted(self.resources.items()):
                 for group_name, group in sorted(groups.items()):
                     for resource_name, resource in sorted(group.items()):
-                        print(f"{exporter}/{group_name}/{resource.cls}/{resource_name}")
+                        path = f"{exporter}/{group_name}/{resource.cls}/{resource_name}"
+                        if self.args.comp:
+                            if path.startswith(self.args.comp):
+                                next_slash = path.find('/', len(self.args.comp))
+                                end = next_slash if next_slash != -1 else len(path)
+                                print(path[:end+1])
+                        else:
+                            print(path)
         elif self.args.type == 'places':
             for name in sorted(self.places.keys()):
                 print(name)
@@ -1601,6 +1602,7 @@ def main():
 
     subparser = subparsers.add_parser('complete', help=argparse.SUPPRESS)
     subparser.add_argument('type', choices=['resources', 'places'])
+    subparser.add_argument('comp', type=str, default=None, nargs='?')
     subparser.set_defaults(func=ClientSession.complete)
 
     subparser = subparsers.add_parser('monitor',
