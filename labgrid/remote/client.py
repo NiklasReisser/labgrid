@@ -36,44 +36,40 @@ from ..util import atomic_replace
 from ..driver import Mode
 
 
-PLACES = {
+COMPLETE_PLACES = {
     "bash": "_shtab_place_completion",
     "zsh": "",
 }
-RESOURCES = {
+COMPLETE_RESOURCES = {
     "bash": "_shtab_res_completion",
     "zsh": "",
 }
-PREAMBLE = {
+COMPLETE_PREAMBLE = {
     "bash": dedent("""\
         # $1=COMP_WORDS[1]
         function _shtab_place_completion() {
             _places=( $(${COMP_WORDS[0]} complete places) )
-
-            compgen -W "${_places[*]}" -- $1
+            [ $? == 0 ] && compgen -W "${_places[*]}" -- $1
         }
         function _shtab_res_completion() {
             # Hack:
-            # shtab passes -o filename to complete. So readline cuts off all but the last element of the path. (The resource name)
+            # If we want file-like completion readline cuts off all but the last element of the path. (The resource name)
             # This is not what we want here, so we shorten the returned resource paths to the next slash (including)
-            # e.g. Hostname/Gro<TAB>
-            # Now _res is Hostname/Group1/Class/A Hostname/Group1/Class/B Hostname/Group2/Class/A ...
-            # Readline shortens this to A B A as possible completions to be printed for the user.
-            # The solution is to iterate over _res, cutting of everything behind Group1
-            # So _res is Hostname/Group1/ Hostname/Group1/ Hostname/Group2/
-            #echo "FUNC BEG" >&2
-            #if [ "$$" -eq "$BASHPID" ]; then echo "not subshell"  >&2 ; else echo "subshell"  >&2; fi
+            # For example with ressources like this: Hostname/Group1/Class/A Hostname/Group1/Class/B Hostname/Group2/Class/A
+            # And we do Hostname/Gro<TAB>
+            # Then readline shortens this to A B A as possible completions to be printed for the user.
+            # The solution is to only return the resource path until the next segment.
 
-            #shopt -p | grep "lastpipe" >&2
-            #"${COMP_WORDS[COMP_CWORD]}"))
+            # TODO:
+                - -p / LG_PROXY must be forwarded
+
             _res=($(${COMP_WORDS[0]} complete resources "${COMP_WORDS[COMP_CWORD]}"))
 
             for res in $_res; do
-            [ "${res: -1}" == "/" ] && compopt -o nospace
+                [ "${res: -1}" == "/" ] && compopt -o nospace
             done
 
             compgen -W "${_res[*]}" -- "${COMP_WORDS[COMP_CWORD]}"
-            #echo "FUNC END" >&2
         }
         """),
     "zsh": "",
@@ -1543,7 +1539,7 @@ def main():
     token = os.environ.get('LG_TOKEN', None)
 
     parser = argparse.ArgumentParser()
-    shtab.add_argument_to(parser, "--print-completion", preamble=PREAMBLE)
+    shtab.add_argument_to(parser, "--print-completion", preamble=COMPLETE_PREAMBLE)
     parser.add_argument(
         '-x',
         '--crossbar',
@@ -1565,7 +1561,7 @@ def main():
         type=str,
         default=place,
         help="place name/alias"
-    ).complete = PLACES
+    ).complete = COMPLETE_PLACES
     parser.add_argument(
         '-s',
         '--state',
@@ -1600,7 +1596,7 @@ def main():
 
     subparser = subparsers.add_parser('help')
 
-    subparser = subparsers.add_parser('complete', help=argparse.SUPPRESS)
+    subparser = subparsers.add_parser('complete')
     subparser.add_argument('type', choices=['resources', 'places'])
     subparser.add_argument('comp', type=str, default=None, nargs='?')
     subparser.set_defaults(func=ClientSession.complete)
@@ -1615,7 +1611,7 @@ def main():
     subparser.add_argument('-e', '--exporter')
     subparser.add_argument('--sort-by-matched-place-change', action='store_true',
                            help="sort by matched place's changed date (oldest first) and show place and date")  # pylint: disable=line-too-long
-    subparser.add_argument('match', nargs='?').complete = RESOURCES
+    subparser.add_argument('match', nargs='?').complete = COMPLETE_RESOURCES
     subparser.set_defaults(func=ClientSession.print_resources)
 
     subparser = subparsers.add_parser('places', aliases=('p',),
@@ -1768,8 +1764,8 @@ def main():
     subparser = subparsers.add_parser('scp',
                                       help="transfer file via scp")
     subparser.add_argument('--name', '-n', help="optional resource name")
-    subparser.add_argument('src', help='source path (use :dir/file for remote side)')
-    subparser.add_argument('dst', help='destination path (use :dir/file for remote side)')
+    subparser.add_argument('src', help='source path (use :dir/file for remote side)').complete = shtab.FILE
+    subparser.add_argument('dst', help='destination path (use :dir/file for remote side)').complete = shtab.FILE
     subparser.set_defaults(func=ClientSession.scp)
 
     subparser = subparsers.add_parser('rsync',
