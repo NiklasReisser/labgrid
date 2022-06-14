@@ -122,6 +122,7 @@ class SSHDriver(CommandMixin, Driver, CommandProtocol, FileTransferProtocol):
         env = os.environ.copy()
         pass_file = ''
         if self.networkservice.password:
+            args += ["-o", 'PreferredAuthentications="password"']
             fd, pass_file = tempfile.mkstemp()
             os.fchmod(fd, stat.S_IRWXU)
             #with openssh>=8.4 SSH_ASKPASS_REQUIRE can be used to force SSH_ASK_PASS
